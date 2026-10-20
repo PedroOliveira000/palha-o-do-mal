@@ -21,9 +21,9 @@ A câmera só funciona em https ou localhost, então o arquivo não pode ser abe
 
 bash
 cd mascara-site
-python3 -m http.server 8000
+python3 -m http.server 8080
 
-Abra http://localhost:8000, clique em Ligar câmera e permita o acesso. Também funciona com a extensão Live Server do VS Code.
+Abra http://localhost:8080, clique em Ligar câmera e permita o acesso. Também funciona com a extensão Live Server do VS Code.
 
 É necessária conexão com a internet: o modelo e os arquivos WASM do MediaPipe são carregados de CDN (jsDelivr e Google Storage).
 
