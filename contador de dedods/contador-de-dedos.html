@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Máscara com MediaPipe</title>
+<style>
+  :root { --bg:#0e0e12; --fg:#f2f2f5; --accent:#ff2a3a; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; flex-direction:column; align-items:center;
+         justify-content:center; gap:16px; background:var(--bg); color:var(--fg); font-family:system-ui,sans-serif; padding:16px; }
+  h1 { margin:0; font-size:1.4rem; }
+  #stage { position:relative; width:min(100%,720px); aspect-ratio:4/3; background:#000; border-radius:16px; overflow:hidden; }
+  video { display:none; }
+  canvas { width:100%; height:100%; display:block; }
+  #status { position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:24px; }
+  button { background:var(--accent); color:#fff; border:0; padding:12px 24px; border-radius:999px; font-size:1rem; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  label { font-size:.9rem; display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+  <h1>🤡 Coloque a máscara</h1>
+  <div id="stage">
+    <canvas id="out" width="960" height="720"></canvas>
+    <div id="status">Clique em “Ligar câmera” para começar.</div>
+  </div>
+  <video id="cam" playsinline muted></video>
+  <button id="start">Ligar câmera</button>
+  <label>Tamanho da máscara
+    <input id="size" type="range" min="0.8" max="1.6" step="0.05" value="1.15">
+  </label>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video = document.getElementById("cam");
+const canvas = document.getElementById("out");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const btn = document.getElementById("start");
+const sizeInput = document.getElementById("size");
+
+// Imagem da máscara (1254x1254). Os buracos dos olhos ficam em ~(465,655) e (785,655).
+const mask = new Image();
+mask.src = "mask.png";
+const MASK_EYE_L = { x: 465, y: 655 };
+const MASK_EYE_R = { x: 785, y: 655 };
+const MASK_EYE_DIST = MASK_EYE_R.x - MASK_EYE_L.x;          // 320 px
+const MASK_EYE_MID = { x: (MASK_EYE_L.x + MASK_EYE_R.x) / 2, y: MASK_EYE_L.y };
+
+let landmarker;
+
+async function init() {
+  const fileset = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  landmarker = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numFaces: 3
+  });
+}
+
+async function startCamera() {
+  btn.disabled = true;
+  statusEl.textContent = "Carregando modelo...";
+  try {
+    await init();
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 720 } });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    statusEl.style.display = "none";
+    btn.style.display = "none";
+    loop();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Erro: " + err.message;
+    btn.disabled = false;
+  }
+}
+
+function drawMask(face) {
+  const W = canvas.width, H = canvas.height;
+  // Landmarks 468 e 473 = centro das íris. x é espelhado para combinar com o vídeo espelhado.
+  const a = { x: (1 - face[468].x) * W, y: face[468].y * H };
+  const b = { x: (1 - face[473].x) * W, y: face[473].y * H };
+  const [l, r] = a.x < b.x ? [a, b] : [b, a];
+
+  const dist = Math.hypot(r.x - l.x, r.y - l.y);
+  const angle = Math.atan2(r.y - l.y, r.x - l.x);
+  const scale = (dist / MASK_EYE_DIST) * parseFloat(sizeInput.value);
+  const mid = { x: (l.x + r.x) / 2, y: (l.y + r.y) / 2 };
+
+  ctx.save();
+  ctx.translate(mid.x, mid.y);
+  ctx.rotate(angle);
+  ctx.scale(scale, scale);
+  ctx.drawImage(mask, -MASK_EYE_MID.x, -MASK_EYE_MID.y);
+  ctx.restore();
+}
+
+function loop() {
+  const W = canvas.width, H = canvas.height;
+
+  // vídeo espelhado (efeito "selfie")
+  ctx.save();
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, -W, 0, W, H);
+  ctx.restore();
+
+  const result = landmarker.detectForVideo(video, performance.now());
+  for (const face of result.faceLandmarks) drawMask(face);
+
+  requestAnimationFrame(loop);
+}
+
+btn.addEventListener("click", startCamera);
+</script>
+</body>
+</html>
